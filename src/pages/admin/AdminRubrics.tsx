@@ -62,7 +62,15 @@ export default function AdminRubrics() {
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         if (resp.ok) {
-          const data = await resp.json();
+          let data = await resp.json();
+          
+          // Filter programs: show all if superadmin, otherwise only programs where user is admin
+          if (!isSuper && user?.id) {
+            data = data.filter((p: any) => 
+              Array.isArray(p.admin_user_ids) && p.admin_user_ids.includes(user.id)
+            );
+          }
+          
           setPrograms(data);
           if (data.length > 0) {
             setSelectedProgram(data[0].id);
@@ -73,7 +81,7 @@ export default function AdminRubrics() {
       }
     };
     loadPrograms();
-  }, []);
+  }, [user, isSuper]);
 
   useEffect(() => {
     if (!selectedProgram) return;
