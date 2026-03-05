@@ -1463,6 +1463,115 @@ app.delete('/super/review-items/:id', authMiddleware, requireRole('superadmin'),
   res.json({ ok: true });
 });
 
+// Admin endpoints for per-program review items
+app.get('/admin/program-review-items/:programId', authMiddleware, (req, res) => {
+  const { programId } = req.params;
+  const userIsAdmin = db.prepare(
+    'SELECT user_id FROM program_admins WHERE program_id = ? AND user_id = ?'
+  ).get(programId, req.user.id);
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r=>r.role);
+  if (!userIsAdmin && !roles.includes('superadmin')) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const items = db.prepare(
+    'SELECT id, label, sort_order FROM review_items WHERE program_id = ? ORDER BY sort_order'
+  ).all(programId);
+  res.json(items);
+});
+
+app.post('/admin/program-review-items/:programId', authMiddleware, (req, res) => {
+  const { programId } = req.params;
+  const userIsAdmin = db.prepare(
+    'SELECT user_id FROM program_admins WHERE program_id = ? AND user_id = ?'
+  ).get(programId, req.user.id);
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r=>r.role);
+  if (!userIsAdmin && !roles.includes('superadmin')) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const { label, sort_order } = req.body;
+  if (!label) return res.status(400).json({ error: 'label required' });
+  const id = uuidv4();
+  db.prepare('INSERT INTO review_items (id, label, sort_order, program_id) VALUES (?, ?, ?, ?)')
+    .run(id, label, sort_order || 0, programId);
+  res.json({ id, label, sort_order: sort_order||0 });
+});
+
+app.put('/admin/program-review-items/:programId/:itemId', authMiddleware, (req, res) => {
+  const { programId, itemId } = req.params;
+  const userIsAdmin = db.prepare(
+    'SELECT user_id FROM program_admins WHERE program_id = ? AND user_id = ?'
+  ).get(programId, req.user.id);
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r=>r.role);
+  if (!userIsAdmin && !roles.includes('superadmin')) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const { label, sort_order } = req.body;
+  const updates = [];
+  const params = [];
+  if (label !== undefined) { updates.push('label = ?'); params.push(label); }
+  if (sort_order !== undefined) { updates.push('sort_order = ?'); params.push(sort_order); }
+  if (updates.length === 0) return res.status(400).json({ error: 'nothing to update' });
+  params.push(itemId);
+  params.push(programId);
+  db.prepare(`UPDATE review_items SET ${updates.join(', ')} WHERE id = ? AND program_id = ?`).run(...params);
+  const item = db.prepare('SELECT id, label, sort_order FROM review_items WHERE id = ? AND program_id = ?').get(itemId, programId);
+  res.json(item || { error: 'not found' });
+});
+
+app.delete('/admin/program-review-items/:programId/:itemId', authMiddleware, (req, res) => {
+  const { programId, itemId } = req.params;
+  const userIsAdmin = db.prepare(
+    'SELECT user_id FROM program_admins WHERE program_id = ? AND user_id = ?'
+  ).get(programId, req.user.id);
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r=>r.role);
+  if (!userIsAdmin && !roles.includes('superadmin')) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  db.prepare('DELETE FROM review_items WHERE id = ? AND program_id = ?').run(itemId, programId);
+  res.json({ ok: true });
+});
+
+// Admin endpoints for per-program weights
+app.get('/admin/program-weights/:programId', authMiddleware, (req, res) => {
+  const { programId } = req.params;
+  const userIsAdmin = db.prepare(
+    'SELECT user_id FROM program_admins WHERE program_id = ? AND user_id = ?'
+  ).get(programId, req.user.id);
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r=>r.role);
+  if (!userIsAdmin && !roles.includes('superadmin')) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const row = db.prepare('SELECT doc_weight, presentation_weight FROM program_weights WHERE program_id = ?').get(programId);
+  const result = { doc: 70, presentation: 30 };
+  if (row) {
+    result.doc = row.doc_weight;
+    result.presentation = row.presentation_weight;
+  }
+  res.json(result);
+});
+
+app.post('/admin/program-weights/:programId', authMiddleware, (req, res) => {
+  const { programId } = req.params;
+  const userIsAdmin = db.prepare(
+    'SELECT user_id FROM program_admins WHERE program_id = ? AND user_id = ?'
+  ).get(programId, req.user.id);
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r=>r.role);
+  if (!userIsAdmin && !roles.includes('superadmin')) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const { doc, presentation } = req.body;
+  if (doc == null || presentation == null) return res.status(400).json({ error: 'missing weights' });
+  const id = db.prepare('SELECT id FROM program_weights WHERE program_id = ?').get(programId)?.id;
+  if (id) {
+    db.prepare('UPDATE program_weights SET doc_weight = ?, presentation_weight = ?, updated_at = ? WHERE id = ?')
+      .run(doc, presentation, Math.floor(Date.now()/1000), id);
+  } else {
+    db.prepare('INSERT INTO program_weights (id, program_id, doc_weight, presentation_weight) VALUES (?, ?, ?, ?)')
+      .run(uuidv4(), programId, doc, presentation);
+  }
+  res.json({ doc, presentation });
+});
+
 app.post('/super/users', authMiddleware, requireRole('superadmin'), async (req, res) => {
   const { institutional_email, password, full_name, student_code, cedula, roles, program_ids } = req.body;
   if (!institutional_email || !password) return res.status(400).json({ error: 'institutional_email and password required' });

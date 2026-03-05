@@ -251,6 +251,26 @@ try {
   console.warn('failed migrating review_items defaults', e);
 }
 
+// Add program_id to review_items for per-program customization
+try {
+  db.prepare("ALTER TABLE review_items ADD COLUMN program_id TEXT").run();
+  console.log('migration: added program_id column to review_items');
+} catch (e) {
+  // if the column already exists this will fail, ignore
+}
+
+// Create table for program-specific weights
+db.prepare(`CREATE TABLE IF NOT EXISTS program_weights (
+  id TEXT PRIMARY KEY,
+  program_id TEXT NOT NULL,
+  doc_weight INTEGER DEFAULT 70,
+  presentation_weight INTEGER DEFAULT 30,
+  created_at INTEGER DEFAULT (strftime('%s','now')),
+  updated_at INTEGER DEFAULT (strftime('%s','now')),
+  UNIQUE(program_id),
+  FOREIGN KEY(program_id) REFERENCES programs(id)
+)`).run();
+
 // make sure the column exists even on older databases
 try {
   db.prepare("ALTER TABLE evaluations ADD COLUMN evaluation_type TEXT DEFAULT 'document'").run();
