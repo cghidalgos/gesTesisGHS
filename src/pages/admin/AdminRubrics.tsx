@@ -25,6 +25,34 @@ export default function AdminRubrics() {
   const [editingType, setEditingType] = useState<string>("");
   const [editSections, setEditSections] = useState<RubricSection[]>([]);
   const [saving, setSaving] = useState(false);
+  const [loadingDefaults, setLoadingDefaults] = useState(false);
+
+  const handleLoadDefaults = async () => {
+    if (!selectedProgram) return;
+    setLoadingDefaults(true);
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/admin/program-rubrics/${selectedProgram}/initialize`, {
+        method: 'POST',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) throw new Error('Error cargando rúbricas');
+      const data = await resp.json();
+      toast.success(data.message || 'Rúbricas cargadas');
+      // Recargar rúbricas
+      const rubResp = await fetch(`${API_BASE}/admin/program-rubrics/${selectedProgram}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (rubResp.ok) {
+        const rubData = await rubResp.json();
+        setRubrics(rubData);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Error');
+    } finally {
+      setLoadingDefaults(false);
+    }
+  };
 
   useEffect(() => {
     const loadPrograms = async () => {
@@ -262,7 +290,16 @@ export default function AdminRubrics() {
                 ))}
               </Accordion>
             ) : (
-              <p className="text-muted-foreground">No hay rúbricas guardadas aún para este programa.</p>
+              <div className="text-center py-8">
+                <p className="text-muted-foreground mb-4">No hay rúbricas guardadas aún para este programa.</p>
+                <Button
+                  onClick={handleLoadDefaults}
+                  disabled={loadingDefaults}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {loadingDefaults ? '⏳ Cargando...' : '📥 Cargar rúbricas por defecto'}
+                </Button>
+              </div>
             )}
           </div>
         )}

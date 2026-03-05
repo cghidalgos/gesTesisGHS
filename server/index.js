@@ -3922,6 +3922,124 @@ app.get('/super/rubrics', authMiddleware, (req, res) => {
   res.json(result);
 });
 
+// POST /admin/program-rubrics/:programId/initialize — cargar rúbricas por defecto
+app.post('/admin/program-rubrics/:programId/initialize', authMiddleware, (req, res) => {
+  const programId = req.params.programId;
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isSuperAdmin = roles.includes('superadmin');
+  
+  if (!isSuperAdmin) {
+    const adminProg = db.prepare('SELECT program_id FROM program_admins WHERE user_id = ? AND program_id = ?').get(req.user.id, programId);
+    if (!adminProg) return res.status(403).json({ error: 'No tiene acceso a este programa' });
+  }
+
+  // Rúbricas por defecto (hardcoded)
+  const defaultRubric = [
+    {
+      id: "a",
+      name: "Marco Teórico y Estado del Arte",
+      weight: 20,
+      criteria: [
+        { id: "a1", name: "Comprensión del mercado actual", maxScore: 5 },
+        { id: "a2", name: "Explicación de construcciones clave", maxScore: 5 },
+        { id: "a3", name: "Claridad en la presentación de los antecedentes", maxScore: 5 }
+      ]
+    },
+    {
+      id: "b",
+      name: "Aspectos Académicos",
+      weight: 40,
+      criteria: [
+        { id: "b1", name: "Originalidad de la solución propuesta", maxScore: 5 },
+        { id: "b2", name: "Rigur académico", maxScore: 5 },
+        { id: "b3", name: "Estructura lógica del documento", maxScore: 5 },
+        { id: "b4", name: "Coherencia entre objetivos y resultados", maxScore: 5 }
+      ]
+    },
+    {
+      id: "c",
+      name: "Aspectos Disciplinares",
+      weight: 30,
+      criteria: [
+        { id: "c1", name: "Implementación técnica", maxScore: 5 },
+        { id: "c2", name: "Métricas y validación", maxScore: 5 },
+        { id: "c3", name: "Análisis de resultados", maxScore: 5 },
+        { id: "c4", name: "Discusión técnica", maxScore: 5 }
+      ]
+    },
+    {
+      id: "d",
+      name: "Presentación del Documento",
+      weight: 10,
+      criteria: [
+        { id: "d1", name: "Redacción", maxScore: 5 },
+        { id: "d2", name: "Cumplimiento de normas", maxScore: 5 }
+      ]
+    }
+  ];
+
+  const presentationRubric = [
+    {
+      id: "p1",
+      name: "Claridad y Dominio del Problema",
+      weight: 25,
+      criteria: [
+        { id: "p1a", name: "Presentación clara del problema de investigación", maxScore: 5 },
+        { id: "p1b", name: "Justificación bien argumentada", maxScore: 5 },
+        { id: "p1c", name: "Coherencia entre problema, objetivos y resultados", maxScore: 5 }
+      ]
+    },
+    {
+      id: "p2",
+      name: "Dominio Metodológico",
+      weight: 25,
+      criteria: [
+        { id: "p2a", name: "Explicación clara de la metodología utilizada", maxScore: 5 },
+        { id: "p2b", name: "Coherencia técnica en las decisiones tomadas", maxScore: 5 },
+        { id: "p2c", name: "Capacidad para justificar el enfoque seleccionado", maxScore: 5 }
+      ]
+    },
+    {
+      id: "p3",
+      name: "Dominio Técnico y Resultados",
+      weight: 30,
+      criteria: [
+        { id: "p3a", name: "Explicación clara de la implementación", maxScore: 5 },
+        { id: "p3b", name: "Interpretación adecuada de métricas y resultados", maxScore: 5 },
+        { id: "p3c", name: "Capacidad de análisis crítico", maxScore: 5 },
+        { id: "p3d", name: "Responde preguntas técnicas con solvencia", maxScore: 5 }
+      ]
+    },
+    {
+      id: "p4",
+      name: "Comunicación y Presentación",
+      weight: 20,
+      criteria: [
+        { id: "p4a", name: "Claridad expositiva", maxScore: 5 },
+        { id: "p4b", name: "Uso adecuado del tiempo", maxScore: 5 },
+        { id: "p4c", name: "Calidad de diapositivas", maxScore: 5 },
+        { id: "p4d", name: "Seguridad y argumentación", maxScore: 5 }
+      ]
+    }
+  ];
+
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    // Cargar rúbrica de documento
+    db.prepare('INSERT OR IGNORE INTO program_rubrics (id, program_id, evaluation_type, sections_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(crypto.randomUUID(), programId, 'document', JSON.stringify(defaultRubric), now, now);
+    
+    // Cargar rúbrica de sustentación
+    db.prepare('INSERT OR IGNORE INTO program_rubrics (id, program_id, evaluation_type, sections_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(crypto.randomUUID(), programId, 'presentation', JSON.stringify(presentationRubric), now, now);
+    
+    res.json({ success: true, message: 'Rúbricas por defecto cargadas' });
+  } catch (e) {
+    console.error('Error loading default rubrics:', e);
+    res.status(500).json({ error: 'Error al cargar rúbricas por defecto' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
