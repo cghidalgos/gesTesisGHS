@@ -20,6 +20,7 @@
     "jsonwebtoken": "^9.0.0",
     "multer": "^1.4.4",
     "open-docxtemplater-image-module": "^1.0.3",
+    "pdf-lib": "^1.17.1",
     "pizzip": "^3.2.0",
     "uuid": "^9.0.0"
   },

@@ -332,4 +332,45 @@ db.prepare(`CREATE TABLE IF NOT EXISTS acta_signatures (
   FOREIGN KEY(signer_user_id) REFERENCES users(id)
 )`).run();
 
+// Documentos de acta con firma digital (PDF con certificado)
+db.prepare(`CREATE TABLE IF NOT EXISTS signed_actas (
+  id TEXT PRIMARY KEY,
+  thesis_id TEXT,
+  current_pdf_url TEXT,
+  version INTEGER DEFAULT 1,
+  status TEXT DEFAULT 'pending',
+  created_at INTEGER DEFAULT (strftime('%s','now')),
+  updated_at INTEGER DEFAULT (strftime('%s','now')),
+  FOREIGN KEY(thesis_id) REFERENCES theses(id)
+)`).run();
+
+// Registro de firmas digitales en el acta
+db.prepare(`CREATE TABLE IF NOT EXISTS digital_signatures (
+  id TEXT PRIMARY KEY,
+  signed_acta_id TEXT,
+  thesis_id TEXT,
+  signer_user_id TEXT,
+  signer_name TEXT,
+  signer_role TEXT,
+  signed_at INTEGER,
+  certificate_cn TEXT,
+  certificate_issuer TEXT,
+  signature_valid INTEGER DEFAULT 0,
+  created_at INTEGER DEFAULT (strftime('%s','now')),
+  FOREIGN KEY(signed_acta_id) REFERENCES signed_actas(id),
+  FOREIGN KEY(thesis_id) REFERENCES theses(id),
+  FOREIGN KEY(signer_user_id) REFERENCES users(id)
+)`).run();
+
+// Carta de recomendación meritoria (para tesis con nota >= 4.8)
+db.prepare(`CREATE TABLE IF NOT EXISTS meritoria_signatures (
+  id TEXT PRIMARY KEY,
+  thesis_id TEXT NOT NULL,
+  signer_name TEXT NOT NULL,
+  signer_user_id TEXT,
+  signed_at INTEGER NOT NULL,
+  pdf_url TEXT,
+  FOREIGN KEY(thesis_id) REFERENCES theses(id)
+)`).run();
+
 module.exports = db;

@@ -11,7 +11,7 @@ services:
       - ADMIN_EMAIL=admin@admin.com
       - ADMIN_PASSWORD=admin
     volumes:
-      - db_data:/app/data
+      - ./server/data:/app/data
       - ./server/uploads:/app/uploads
       # mount source code for live development so changes apply without rebuild
       - ./server:/app
@@ -40,6 +40,3 @@ services:
       - ./tsconfig.app.json:/app/tsconfig.app.json
       - ./tsconfig.node.json:/app/tsconfig.node.json
     command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
-
-volumes:
-  db_data:

@@ -21,10 +21,20 @@ export default function AdminThesisDetail() {
   const [reviewItems, setReviewItems] = useState<{id:string,label:string}[]>([]);
   const [weights, setWeights] = useState<{doc:number;presentation:number}>({doc:70,presentation:30});
   const [actaStatus, setActaStatus] = useState<any>(null);
-  const [directorName, setDirectorName] = useState("");
-  const [directorSignFile, setDirectorSignFile] = useState<File | null>(null);
-  const [programDirectorName, setProgramDirectorName] = useState("");
-  const [programDirectorSignFile, setProgramDirectorSignFile] = useState<File | null>(null);
+  
+  // Estado para firma digital con certificado
+  const [digitalSignStatus, setDigitalSignStatus] = useState<any>(null);
+  const [digitalSignFile, setDigitalSignFile] = useState<File | null>(null);
+  const [digitalSignerRole, setDigitalSignerRole] = useState<string>("");
+  const [digitalSignerName, setDigitalSignerName] = useState<string>("");
+  const [loadingDigitalSign, setLoadingDigitalSign] = useState(false);
+  const [digitalProgDirectorName, setDigitalProgDirectorName] = useState<string>("");
+
+  // Estado para carta meritoria
+  const [meritoriaStatus, setMeritoriaStatus] = useState<any>(null);
+  const [meritoriaSignFile, setMeritoriaSignFile] = useState<File | null>(null);
+  const [meritoriaSignerName, setMeritoriaSignerName] = useState<string>("");
+  const [loadingMeritoria, setLoadingMeritoria] = useState(false);
 
   // compute consolidated averages and breakdown for display
   const consolidated = (() => {
@@ -83,8 +93,36 @@ export default function AdminThesisDetail() {
       if (actaResp.ok) {
         const acta = await actaResp.json();
         setActaStatus(acta);
-        if (!directorName && acta.directors?.length) setDirectorName(acta.directors[0]);
       }
+
+      // Cargar estado de firma digital
+      try {
+        const digitalResp = await fetch(`${API_BASE}/theses/${id}/acta/digital-signature-status`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (digitalResp.ok) {
+          const digitalData = await digitalResp.json();
+          setDigitalSignStatus(digitalData);
+        } else {
+          const errText = await digitalResp.text();
+          console.error('digital-signature-status error:', digitalResp.status, errText);
+          setDigitalSignStatus({ allSigned: false, digitalSignatures: [], pendingSigners: [], _error: true });
+        }
+      } catch (digitalErr) {
+        console.error('digital-signature-status fetch failed:', digitalErr);
+        setDigitalSignStatus({ allSigned: false, digitalSignatures: [], pendingSigners: [], _error: true });
+      }
+
+      // Cargar estado carta meritoria
+      try {
+        const merResp = await fetch(`${API_BASE}/theses/${id}/meritoria/status`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (merResp.ok) {
+          const merData = await merResp.json();
+          setMeritoriaStatus(merData);
+        }
+      } catch {}
     } catch (err: any) {
       toast.error(err.message);
     }
@@ -563,181 +601,352 @@ export default function AdminThesisDetail() {
         )}
         {actaStatus?.allEvaluatorsDone && (
           <div className="mb-6 border p-4 rounded bg-success/5">
-            <h3 className="font-semibold mb-2">Acta de Sustentación</h3>
-            <p className="text-sm text-muted-foreground mb-2">
-              Firmas de jurados: {actaStatus.evaluatorSignatures?.length || 0}/{actaStatus.evaluators?.length || 0}
-            </p>
-            {actaStatus.missingEvaluatorSignatures?.length > 0 && (
-              <p className="text-sm text-red-600 mb-2">
-                Pendientes por firmar: {actaStatus.missingEvaluatorSignatures.map((e:any)=>e.name).join(', ')}
-              </p>
-            )}
-            <div className="space-y-2 mb-3">
-              {(actaStatus.evaluatorSignatures || []).map((s:any) => (
-                <div key={s.id} className="text-sm">
-                  Jurado: <strong>{s.signer_name}</strong>{' '}
-                  <a className="text-accent hover:underline" href={`${API_BASE}${s.file_url}`} target="_blank" rel="noreferrer">ver firma</a>
-                </div>
-              ))}
-              {(actaStatus.directorSignatures || []).map((s:any) => (
-                <div key={s.id} className="text-sm">
-                  Director: <strong>{s.signer_name}</strong>{' '}
-                  <a className="text-accent hover:underline" href={`${API_BASE}${s.file_url}`} target="_blank" rel="noreferrer">ver firma</a>
-                </div>
-              ))}
+            <h3 className="font-semibold mb-2">🔐 Firma Digital del Acta</h3>
+
+            {/* Estado de firmas */}
+            <div className="mb-3 space-y-1">
+              <p className="text-xs font-medium">Estado de firmas:</p>
+              {actaStatus?.digitalSignatures?.length > 0 ? (
+                actaStatus.digitalSignatures.map((sig: any, idx: number) => (
+                  <div key={idx} className="text-xs text-green-600">
+                    ✓ {sig.signer_role === 'evaluator' ? 'Evaluador' : sig.signer_role === 'director' ? 'Director' : 'Dir. Programa'}: {sig.signer_name}
+                    {sig.certificate_cn && <span className="text-muted-foreground"> ({sig.certificate_cn})</span>}
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-muted-foreground">No hay firmas digitales registradas aún.</p>
+              )}
+              {actaStatus?.digitalPendingSigners?.length > 0 && (
+                <p className="text-xs text-orange-600 mt-1">
+                  Pendientes: {actaStatus.digitalPendingSigners.map((p: any) => p.name).join(', ')}
+                </p>
+              )}
             </div>
 
-            <div className="border-t pt-3 mt-2">
-              <p className="text-sm font-medium mb-2">Firma del Director (admin)</p>
-              {(() => {
-                const signed = (actaStatus.directorSignatures || []).map((s:any) => s.signer_name?.toLowerCase());
-                const pending = (actaStatus.directors || []).filter((d:string) => !signed.includes(d.toLowerCase()));
-                if (pending.length === 0) return <p className="text-sm text-muted-foreground mb-2">Todos los directores ya firmaron.</p>;
-                return (
+            {/* Si todas las firmas están completas */}
+            {actaStatus?.allSigned && (
+              <div className="bg-green-50 border border-green-200 rounded p-3 mb-3">
+                <p className="text-sm font-medium text-green-700 mb-2">✅ Todas las firmas han sido registradas</p>
+                <div className="flex gap-2 flex-wrap">
+                  <Button variant="outline" size="sm" onClick={async () => {
+                    try {
+                      const token = localStorage.getItem('token');
+                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/download-final-signed`, {
+                        headers: { Authorization: token ? `Bearer ${token}` : '' },
+                      });
+                      if (!resp.ok) throw new Error('No se pudo descargar');
+                      const blob = await resp.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `acta-final-firmada-${thesis.id}.pdf`;
+                      a.click();
+                      window.URL.revokeObjectURL(url);
+                    } catch (e: any) {
+                      toast.error(e.message || 'Error al descargar');
+                    }
+                  }}>
+                    📄 Descargar PDF final firmado
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={async () => {
+                    try {
+                      const token = localStorage.getItem('token');
+                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/export?format=word`, {
+                        headers: { Authorization: token ? `Bearer ${token}` : '' },
+                      });
+                      if (!resp.ok) throw new Error('No se pudo descargar');
+                      const blob = await resp.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `acta-${thesis.id}.docx`;
+                      a.click();
+                      window.URL.revokeObjectURL(url);
+                    } catch (e: any) {
+                      toast.error(e.message || 'Error al descargar Word');
+                    }
+                  }}>
+                    📝 Descargar Word
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {!actaStatus?.allSigned && <div>
+              <p className="text-xs text-muted-foreground mb-3">
+                Descargue el PDF, fírmelo con Adobe Acrobat usando su certificado digital y súbalo de vuelta.
+              </p>
+
+              {/* Descargar PDF para firmar */}
+              <div className="mb-3 space-y-2">
+                <label className="text-xs font-medium block">Director del Programa (para incluir en el acta):</label>
+                <input
+                  type="text"
+                  className="border rounded px-2 py-1 text-sm w-full max-w-xs"
+                  placeholder="Nombre del Director del Programa"
+                  value={digitalProgDirectorName}
+                  onChange={(e) => setDigitalProgDirectorName(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-2 flex-wrap mb-3">
+                <Button variant="outline" size="sm" onClick={async () => {
+                  try {
+                    const token = localStorage.getItem('token');
+                    const url = new URL(`${API_BASE}/theses/${thesis.id}/acta/download-for-signing`);
+                    if (digitalProgDirectorName) {
+                      url.searchParams.set('prog_director_name', digitalProgDirectorName);
+                    }
+                    const resp = await fetch(url.toString(), {
+                      headers: { Authorization: token ? `Bearer ${token}` : '' },
+                    });
+                    if (!resp.ok) throw new Error('No se pudo descargar');
+                    const blob = await resp.blob();
+                    const dlUrl = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = dlUrl;
+                    a.download = `acta-${thesis.id}-para-firmar.pdf`;
+                    a.click();
+                    window.URL.revokeObjectURL(dlUrl);
+                  } catch (e: any) {
+                    toast.error(e.message || 'Error al descargar');
+                  }
+                }}>
+                  📥 Descargar PDF para firmar
+                </Button>
+              </div>
+
+              {/* Subir PDF firmado */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium">Subir PDF firmado:</p>
+                <select
+                  className="border rounded px-2 py-1 text-sm w-full"
+                  value={digitalSignerRole}
+                  onChange={(e) => {
+                    setDigitalSignerRole(e.target.value);
+                    if (e.target.value === 'director' && actaStatus?.directors?.length) {
+                      setDigitalSignerName(actaStatus.directors[0]);
+                    } else {
+                      setDigitalSignerName("");
+                    }
+                  }}
+                >
+                  <option value="">Seleccione su rol...</option>
+                  <option value="director">Director de tesis</option>
+                  <option value="program_director">Director del programa</option>
+                </select>
+
+                {digitalSignerRole === 'director' && actaStatus?.directors?.length > 1 && (
                   <select
-                    className="border rounded px-2 py-1 text-sm mb-2 w-full"
-                    value={directorName}
-                    onChange={(e) => setDirectorName(e.target.value)}
+                    className="border rounded px-2 py-1 text-sm w-full"
+                    value={digitalSignerName}
+                    onChange={(e) => setDigitalSignerName(e.target.value)}
                   >
-                    <option value="">Seleccione un director...</option>
-                    {pending.map((d:string) => (
+                    {actaStatus.directors.map((d: string) => (
                       <option key={d} value={d}>{d}</option>
                     ))}
                   </select>
+                )}
+
+                {digitalSignerRole === 'program_director' && (
+                  <input
+                    className="border rounded px-2 py-1 text-sm w-full"
+                    placeholder="Nombre del director del programa"
+                    value={digitalSignerName}
+                    onChange={(e) => setDigitalSignerName(e.target.value)}
+                  />
+                )}
+
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={(e) => setDigitalSignFile(e.target.files?.[0] || null)}
+                  className="text-sm"
+                />
+
+                <Button
+                  size="sm"
+                  disabled={!digitalSignFile || !digitalSignerRole || loadingDigitalSign}
+                  onClick={async () => {
+                    if (!digitalSignFile || !digitalSignerRole) return;
+                    setLoadingDigitalSign(true);
+                    try {
+                      const token = localStorage.getItem('token');
+                      const form = new FormData();
+                      form.append('signed_pdf', digitalSignFile);
+                      form.append('signer_role', digitalSignerRole);
+                      if (digitalSignerName) form.append('signer_name', digitalSignerName);
+
+                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/upload-signed`, {
+                        method: 'POST',
+                        headers: { Authorization: token ? `Bearer ${token}` : '' },
+                        body: form,
+                      });
+                      const data = await resp.json();
+                      if (!resp.ok) throw new Error(data.error || 'No se pudo subir');
+
+                      toast.success('Firma digital registrada correctamente');
+                      setDigitalSignFile(null);
+                      setDigitalSignerRole("");
+                      setDigitalSignerName("");
+                      fetchThesis();
+                    } catch (e: any) {
+                      toast.error(e.message || 'Error al subir PDF firmado');
+                    } finally {
+                      setLoadingDigitalSign(false);
+                    }
+                  }}
+                >
+                  {loadingDigitalSign ? 'Subiendo...' : '📤 Subir PDF firmado'}
+                </Button>
+              </div>
+            </div>}
+          </div>
+        )}
+
+        {/* CARTA MERITORIA — visible solo si nota >= 4.8 */}
+        {meritoriaStatus?.qualifies && (
+          <div className="mb-6 border p-4 rounded bg-yellow-50">
+            <h3 className="font-semibold mb-1">🏅 Carta de Recomendación Meritoria</h3>
+            <p className="text-xs text-muted-foreground mb-3">
+              La tesis obtuvo una nota de <strong>{Number(meritoriaStatus.score).toFixed(2)}</strong>, por lo que requiere carta de recomendación meritoria firmada por los directores.
+            </p>
+
+            {/* Estado de firmas */}
+            <div className="mb-3 space-y-1">
+              <p className="text-xs font-medium">Firmas de directores:</p>
+              {meritoriaStatus.directors.map((d: string) => {
+                const signed = meritoriaStatus.signatures.some((s: any) => s.signer_name.toLowerCase() === d.toLowerCase());
+                return (
+                  <div key={d} className={`text-xs ${signed ? 'text-green-600' : 'text-orange-500'}`}>
+                    {signed ? '✓' : '○'} {d}
+                  </div>
                 );
-              })()}
-              <input type="file" accept="image/*" onChange={(e) => setDirectorSignFile(e.target.files?.[0] || null)} className="mb-2" />
-              <div className="flex gap-2 flex-wrap">
-                <Button
-                  disabled={!directorSignFile || !directorName}
-                  onClick={async () => {
-                    try {
-                      const token = localStorage.getItem('token');
-                      const form = new FormData();
-                      if (directorSignFile) form.append('signature', directorSignFile);
-                      if (directorName) form.append('director_name', directorName);
-                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/sign-director`, {
-                        method: 'POST',
-                        headers: { Authorization: token ? `Bearer ${token}` : '' },
-                        body: form,
-                      });
-                      const data = await resp.json();
-                      if (!resp.ok) throw new Error(data.error || 'No se pudo registrar firma');
-                      toast.success('Firma de director registrada');
-                      setDirectorSignFile(null);
-                      fetchThesis();
-                    } catch (e:any) {
-                      toast.error(e.message || 'Error registrando firma');
-                    }
-                  }}
-                >
-                  Firmar acta como director
-                </Button>
-              </div>
+              })}
             </div>
 
-            <div className="border-t pt-3 mt-3">
-              <p className="text-sm font-medium mb-2">Firma del Director del Programa</p>
-              {actaStatus.programDirectorSignature && (
-                <div className="text-sm mb-2 text-green-600">
-                  ✓ Firmado por: <strong>{actaStatus.programDirectorSignature.signer_name}</strong>{' '}
-                  <a className="text-accent hover:underline" href={`${API_BASE}${actaStatus.programDirectorSignature.file_url}`} target="_blank" rel="noreferrer">ver firma</a>
+            {/* Banner firmada completa */}
+            {meritoriaStatus.allSigned && (
+              <div className="bg-green-50 border border-green-200 rounded p-3 mb-3">
+                <p className="text-sm font-medium text-green-700 mb-2">✅ Carta firmada por todos los directores</p>
+                <div className="flex gap-2 flex-wrap">
+                  <Button variant="outline" size="sm" onClick={async () => {
+                    try {
+                      const token = localStorage.getItem('token');
+                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/meritoria/download-final?format=pdf`, {
+                        headers: { Authorization: token ? `Bearer ${token}` : '' },
+                      });
+                      if (!resp.ok) throw new Error('No se pudo descargar');
+                      const blob = await resp.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a'); a.href = url;
+                      a.download = `carta-meritoria-${thesis.id}.pdf`; a.click();
+                      window.URL.revokeObjectURL(url);
+                    } catch (e: any) { toast.error(e.message || 'Error'); }
+                  }}>📄 Descargar PDF firmado</Button>
+                  <Button variant="outline" size="sm" onClick={async () => {
+                    try {
+                      const token = localStorage.getItem('token');
+                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/meritoria/download-final?format=word`, {
+                        headers: { Authorization: token ? `Bearer ${token}` : '' },
+                      });
+                      if (!resp.ok) throw new Error('No se pudo descargar');
+                      const blob = await resp.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a'); a.href = url;
+                      a.download = `carta-meritoria-${thesis.id}.docx`; a.click();
+                      window.URL.revokeObjectURL(url);
+                    } catch (e: any) { toast.error(e.message || 'Error'); }
+                  }}>📝 Descargar Word</Button>
                 </div>
-              )}
-              <input
-                className="border rounded px-2 py-1 text-sm mb-2 w-full"
-                placeholder="Nombre del director del programa"
-                value={programDirectorName}
-                onChange={(e) => setProgramDirectorName(e.target.value)}
-              />
-              <input type="file" accept="image/*" onChange={(e) => setProgramDirectorSignFile(e.target.files?.[0] || null)} className="mb-2" />
-              <div className="flex gap-2 flex-wrap">
-                <Button
-                  disabled={!programDirectorSignFile}
-                  onClick={async () => {
+              </div>
+            )}
+
+            {/* Formulario subida y descarga para firmar */}
+            {!meritoriaStatus.allSigned && (
+              <div>
+                <div className="flex gap-2 flex-wrap mb-3">
+                  <Button variant="outline" size="sm" onClick={async () => {
                     try {
                       const token = localStorage.getItem('token');
-                      const form = new FormData();
-                      if (programDirectorSignFile) form.append('signature', programDirectorSignFile);
-                      if (programDirectorName) form.append('program_director_name', programDirectorName);
-                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/sign-program-director`, {
-                        method: 'POST',
+                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/meritoria/download-for-signing?format=pdf`, {
                         headers: { Authorization: token ? `Bearer ${token}` : '' },
-                        body: form,
                       });
-                      const data = await resp.json();
-                      if (!resp.ok) throw new Error(data.error || 'No se pudo registrar firma');
-                      toast.success('Firma del director del programa registrada');
-                      setProgramDirectorSignFile(null);
-                      setProgramDirectorName("");
-                      fetchThesis();
-                    } catch (e:any) {
-                      toast.error(e.message || 'Error registrando firma');
-                    }
-                  }}
-                >
-                  Firmar como director del programa
-                </Button>
-              </div>
-            </div>
+                      if (!resp.ok) throw new Error('No se pudo descargar');
+                      const blob = await resp.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a'); a.href = url;
+                      a.download = `carta-meritoria-${thesis.id}-para-firmar.pdf`; a.click();
+                      window.URL.revokeObjectURL(url);
+                    } catch (e: any) { toast.error(e.message || 'Error'); }
+                  }}>📥 Descargar PDF para firmar</Button>
+                  <Button variant="outline" size="sm" onClick={async () => {
+                    try {
+                      const token = localStorage.getItem('token');
+                      const resp = await fetch(`${API_BASE}/theses/${thesis.id}/meritoria/download-for-signing`, {
+                        headers: { Authorization: token ? `Bearer ${token}` : '' },
+                      });
+                      if (!resp.ok) throw new Error('No se pudo descargar');
+                      const blob = await resp.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a'); a.href = url;
+                      a.download = `carta-meritoria-${thesis.id}-para-firmar.docx`; a.click();
+                      window.URL.revokeObjectURL(url);
+                    } catch (e: any) { toast.error(e.message || 'Error'); }
+                  }}>📥 Descargar Word para firmar</Button>
+                </div>
 
-            <div className="border-t pt-3 mt-3">
-              <p className="text-sm font-medium mb-2">Exportar Acta</p>
-              <div className="flex gap-2 flex-wrap">
-                <Button variant="outline" onClick={async () => {
-                  try {
-                    const token = localStorage.getItem('token');
-                    const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/export?format=word`, {
-                      headers: { Authorization: token ? `Bearer ${token}` : '' },
-                    });
-                    if (!resp.ok) {
-                      const errorData = await resp.json().catch(() => ({}));
-                      throw new Error(errorData.message || errorData.error || 'No se pudo exportar');
-                    }
-                    const blob = await resp.blob();
-                    const contentDisposition = resp.headers.get('content-disposition') || '';
-                    const fileNameMatch = contentDisposition.match(/filename="?([^\"]+)"?/i);
-                    const fileName = fileNameMatch?.[1] || `acta_${thesis.id}.doc`;
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = fileName;
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                  } catch (e: any) {
-                    toast.error(e.message || 'Error al exportar');
-                  }
-                }}>
-                  Exportar Word
-                </Button>
-                <Button variant="outline" onClick={async () => {
-                  try {
-                    const token = localStorage.getItem('token');
-                    const resp = await fetch(`${API_BASE}/theses/${thesis.id}/acta/export?format=pdf`, {
-                      headers: { Authorization: token ? `Bearer ${token}` : '' },
-                    });
-                    if (!resp.ok) {
-                      const errorData = await resp.json().catch(() => ({}));
-                      throw new Error(errorData.message || errorData.error || 'No se pudo exportar');
-                    }
-                    const blob = await resp.blob();
-                    const disposition = resp.headers.get('Content-Disposition') || '';
-                    const filenameMatch = disposition.match(/filename="?([^";\n]+)"?/);
-                    const fileName = filenameMatch ? filenameMatch[1] : `acta_${thesis.id}.pdf`;
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = fileName;
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                  } catch (e: any) {
-                    toast.error(e.message || 'Error al exportar');
-                  }
-                }}>
-                  Exportar PDF
-                </Button>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium">Subir PDF firmado por director:</p>
+                  <select
+                    className="border rounded px-2 py-1 text-sm w-full"
+                    value={meritoriaSignerName}
+                    onChange={(e) => setMeritoriaSignerName(e.target.value)}
+                  >
+                    <option value="">Seleccione director...</option>
+                    {meritoriaStatus.pendingDirectors.map((d: string) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(e) => setMeritoriaSignFile(e.target.files?.[0] || null)}
+                    className="text-sm"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={!meritoriaSignFile || !meritoriaSignerName || loadingMeritoria}
+                    onClick={async () => {
+                      if (!meritoriaSignFile || !meritoriaSignerName) return;
+                      setLoadingMeritoria(true);
+                      try {
+                        const token = localStorage.getItem('token');
+                        const form = new FormData();
+                        form.append('signed_pdf', meritoriaSignFile);
+                        form.append('signer_name', meritoriaSignerName);
+                        const resp = await fetch(`${API_BASE}/theses/${thesis.id}/meritoria/upload-signed`, {
+                          method: 'POST',
+                          headers: { Authorization: token ? `Bearer ${token}` : '' },
+                          body: form,
+                        });
+                        const data = await resp.json();
+                        if (!resp.ok) throw new Error(data.error || 'No se pudo subir');
+                        toast.success('Firma registrada en carta meritoria');
+                        setMeritoriaSignFile(null);
+                        setMeritoriaSignerName('');
+                        fetchThesis();
+                      } catch (e: any) {
+                        toast.error(e.message || 'Error al subir');
+                      } finally {
+                        setLoadingMeritoria(false);
+                      }
+                    }}
+                  >
+                    {loadingMeritoria ? 'Subiendo...' : '📤 Registrar firma'}
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
