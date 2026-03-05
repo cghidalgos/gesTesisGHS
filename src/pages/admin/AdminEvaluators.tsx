@@ -25,6 +25,16 @@ interface Evaluator {
   theses: number;
 }
 
+interface EvaluatedThesis {
+  id: string;
+  title: string;
+  status: string;
+  assigned_at: number;
+  due_date?: number;
+  is_blind: number;
+  student_names?: string;
+}
+
 // start with empty list; actual evaluators come from backend
 const initialEvaluators: Evaluator[] = [];
 
@@ -33,6 +43,8 @@ export default function AdminEvaluators() {
   const [showRegister, setShowRegister] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showAssign, setShowAssign] = useState(false);
+  const [selectedEvaluatorId, setSelectedEvaluatorId] = useState<string | null>(null);
+  const [evaluatedTheses, setEvaluatedTheses] = useState<EvaluatedThesis[]>([]);
   const [thesisId, setThesisId] = useState<string | null>(null);
   const [thesisInfo, setThesisInfo] = useState<any>(null);
   const [newEval, setNewEval] = useState({ name: "", institutionalEmail: "", specialty: "", password: "" });
@@ -122,6 +134,22 @@ export default function AdminEvaluators() {
       setEvaluators(mapped);
     } catch (err) {
       console.error('fetchEvaluators', err);
+    }
+  };
+
+  const fetchEvaluatedTheses = async (evaluatorId: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/evaluator/${evaluatorId}/evaluated-theses`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!resp.ok) throw new Error('No se pudieron cargar las tesis evaluadas');
+      const list = await resp.json();
+      setEvaluatedTheses(list);
+      setSelectedEvaluatorId(evaluatorId);
+    } catch (err) {
+      console.error('fetchEvaluatedTheses', err);
+      toast.error('Error cargando las tesis evaluadas');
     }
   };
 
@@ -355,7 +383,12 @@ export default function AdminEvaluators() {
                   <BookOpen className="w-3 h-3" />
                   {ev.specialty}
                 </span>
-                <span className="status-badge bg-secondary text-secondary-foreground">{ev.theses} tesis</span>
+                <button 
+                  onClick={() => fetchEvaluatedTheses(ev.id)}
+                  className="status-badge bg-secondary text-secondary-foreground hover:bg-secondary/80 cursor-pointer transition-colors"
+                >
+                  {ev.theses} tesis
+                </button>
               </div>
               <div className="mt-3 flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => handleEditEvaluator(ev)}>
@@ -368,6 +401,59 @@ export default function AdminEvaluators() {
             </div>
           ))}
         </div>
+
+        {/* Modal para mostrar tesis evaluadas */}
+        <Dialog open={selectedEvaluatorId !== null} onOpenChange={(open) => {
+          if (!open) setSelectedEvaluatorId(null);
+        }}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="font-heading">
+                Tesis evaluadas por {evaluators.find(e => e.id === selectedEvaluatorId)?.name || 'Evaluador'}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="mt-4 space-y-3 max-h-96 overflow-y-auto">
+              {evaluatedTheses.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No hay tesis evaluadas aún
+                </p>
+              ) : (
+                evaluatedTheses.map((thesis) => (
+                  <div key={thesis.id} className="border rounded-lg p-4 hover:bg-secondary/50 transition-colors">
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className="font-semibold text-foreground text-sm flex-1">{thesis.title}</h4>
+                        <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary whitespace-nowrap">
+                          {thesis.status}
+                        </span>
+                      </div>
+                      {thesis.student_names && (
+                        <p className="text-xs text-muted-foreground">
+                          <strong>Estudiante:</strong> {thesis.student_names}
+                        </p>
+                      )}
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>
+                          Asignada: {new Date(thesis.assigned_at * 1000).toLocaleDateString('es-CO')}
+                        </span>
+                        {thesis.is_blind === 1 && (
+                          <span className="text-xs px-2 py-1 rounded bg-yellow-500/20 text-yellow-700 dark:text-yellow-300">
+                            Par Ciego
+                          </span>
+                        )}
+                      </div>
+                      {thesis.due_date && (
+                        <p className="text-xs text-muted-foreground">
+                          <strong>Fecha límite:</strong> {new Date(thesis.due_date * 1000).toLocaleDateString('es-CO')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppLayout>
   );

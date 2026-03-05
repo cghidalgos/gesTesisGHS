@@ -1095,6 +1095,7 @@ app.post('/users/register', authMiddleware, requireRole('admin'), async (req, re
 // Listar usuarios (solo admin). Puede filtrar por ?role=evaluator etc.
 app.get('/users', authMiddleware, requireRole('admin'), (req, res) => {
   const { role } = req.query;
+  // First get all distinct users with their roles
   let sql = `SELECT u.id, u.institutional_email, u.full_name, r.role
              FROM users u
              LEFT JOIN user_roles r ON u.id = r.user_id`;
@@ -1104,15 +1105,47 @@ app.get('/users', authMiddleware, requireRole('admin'), (req, res) => {
     params.push(role);
   }
   const rows = db.prepare(sql).all(...params);
-  // aggregate roles into array per user
+  
+  // Aggregate by user and count distinct theses evaluated
   const map = {};
   for (const r of rows) {
     if (!map[r.id]) {
-      map[r.id] = { id: r.id, institutional_email: r.institutional_email, full_name: r.full_name, roles: [] };
+      // Count distinct theses this evaluator has evaluated
+      const countResult = db.prepare(`
+        SELECT COUNT(DISTINCT t.id) as count
+        FROM thesis_evaluators te
+        LEFT JOIN theses t ON te.thesis_id = t.id
+        WHERE te.evaluator_id = ? AND (t.id IS NULL OR t.status != 'deleted')
+      `).get(r.id);
+      
+      map[r.id] = {
+        id: r.id,
+        institutional_email: r.institutional_email,
+        full_name: r.full_name,
+        roles: [],
+        theses: countResult.count || 0,
+      };
     }
     if (r.role) map[r.id].roles.push(r.role);
   }
   res.json(Object.values(map));
+});
+
+// Get theses evaluated by a specific evaluator
+app.get('/evaluator/:id/evaluated-theses', authMiddleware, requireRole('admin'), (req, res) => {
+  const { id } = req.params;
+  const rows = db.prepare(`
+    SELECT t.id, t.title, t.status, te.assigned_at, te.due_date, te.is_blind, 
+           GROUP_CONCAT(u.full_name, ', ') as student_names
+    FROM thesis_evaluators te
+    JOIN theses t ON te.thesis_id = t.id
+    LEFT JOIN thesis_students ts ON t.id = ts.thesis_id
+    LEFT JOIN users u ON ts.student_id = u.id
+    WHERE te.evaluator_id = ? AND t.status != 'deleted'
+    GROUP BY t.id, te.id
+    ORDER BY te.assigned_at DESC
+  `).all(id);
+  res.json(rows || []);
 });
 
 // Editar usuario (solo admin)
