@@ -5,7 +5,6 @@ import {
   LayoutDashboard,
   FileText,
   Users,
-  ClipboardCheck,
   Menu,
   X,
   BookOpen,
@@ -58,12 +57,11 @@ export default function AppLayout({ children, role }: AppLayoutProps) {
   if (effectiveRole === 'admin' && !isSuper) {
     items = items.filter(i => i.href !== '/admin/programs');
   }
+  // add users option for superadmin (review-items and weights are already in base admin menu)
   if (isSuper && effectiveRole === 'admin') {
     items = [
       ...items,
       { label: 'Usuarios', href: '/admin/users', icon: Users },
-      { label: 'Checklist', href: '/admin/review-items', icon: ClipboardCheck },
-      { label: 'Pesos', href: '/admin/weights', icon: FileText },
     ];
   }
 
