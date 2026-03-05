@@ -373,4 +373,28 @@ db.prepare(`CREATE TABLE IF NOT EXISTS meritoria_signatures (
   FOREIGN KEY(thesis_id) REFERENCES theses(id)
 )`).run();
 
+// Tokens de firma compartibles (sin login)
+db.prepare(`CREATE TABLE IF NOT EXISTS signing_tokens (
+  id TEXT PRIMARY KEY,
+  thesis_id TEXT NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  signer_name TEXT NOT NULL,
+  signer_role TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  used_at INTEGER,
+  FOREIGN KEY(thesis_id) REFERENCES theses(id)
+)`).run();
+
+// Rúbricas por programa
+db.prepare(`CREATE TABLE IF NOT EXISTS program_rubrics (
+  id TEXT PRIMARY KEY,
+  program_id TEXT NOT NULL,
+  evaluation_type TEXT NOT NULL,
+  sections_json TEXT NOT NULL,
+  created_at INTEGER DEFAULT (strftime('%s','now')),
+  updated_at INTEGER DEFAULT (strftime('%s','now')),
+  FOREIGN KEY(program_id) REFERENCES programs(id),
+  UNIQUE(program_id, evaluation_type)
+)`).run();
+
 module.exports = db;

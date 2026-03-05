@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const Docxtemplater = require('docxtemplater');
@@ -3673,6 +3674,252 @@ app.get('/theses/:id/meritoria/download-final', authMiddleware, (req, res) => {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="carta-meritoria-${thesisId}.pdf"`);
   res.sendFile(pdfPath);
+});
+
+// POST /theses/:id/generate-signing-token — genera un token compartible para firma sin login
+app.post('/theses/:id/generate-signing-token', authMiddleware, (req, res) => {
+  const thesisId = req.params.id;
+  const { signerName, signerRole } = req.body;
+  
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isAdmin = roles.includes('admin') || roles.includes('superadmin');
+  if (!isAdmin) return res.status(403).json({ error: 'forbidden' });
+
+  const ctx = getActaContext(thesisId);
+  if (!ctx) return res.status(404).json({ error: 'not found' });
+
+  // Generar token único
+  const token = crypto.randomBytes(24).toString('hex');
+  const tokenId = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+
+  // Guardar token
+  db.prepare(`INSERT INTO signing_tokens (id, thesis_id, token, signer_name, signer_role, created_at, used_at)
+    VALUES (?, ?, ?, ?, ?, ?, NULL)`).run(tokenId, thesisId, token, signerName, signerRole, now);
+
+  // Generar URL apuntando al frontend (puerto 5173)
+  const signUrl = `http://localhost:5173/sign/token/${token}`;
+  res.json({ token, signUrl });
+});
+
+// GET /sign/token/:token — devuelve data para formulario de firma (sin autenticación)
+app.get('/sign/token/:token', (req, res) => {
+  const token = req.params.token;
+  
+  const tokenRow = db.prepare('SELECT * FROM signing_tokens WHERE token = ? AND used_at IS NULL').get(token);
+  if (!tokenRow) return res.status(404).json({ error: 'Token inválido o ya utilizado' });
+
+  const ctx = getActaContext(tokenRow.thesis_id);
+  if (!ctx) return res.status(404).json({ error: 'Tesis no encontrada' });
+
+  res.json({
+    token,
+    thesisId: tokenRow.thesis_id,
+    signerName: tokenRow.signer_name,
+    signerRole: tokenRow.signer_role,
+    thesis: { title: ctx.thesis.title },
+    students: ctx.students,
+    directors: ctx.directors,
+  });
+});
+
+// POST /sign/token/:token/upload-signed — sube PDF firmado sin autenticación
+app.post('/sign/token/:token/upload-signed', upload.single('signed_pdf'), (req, res) => {
+  const token = req.params.token;
+  
+  const tokenRow = db.prepare('SELECT * FROM signing_tokens WHERE token = ? AND used_at IS NULL').get(token);
+  if (!tokenRow) return res.status(404).json({ error: 'Token inválido o ya utilizado' });
+
+  if (!req.file) return res.status(400).json({ error: 'No se subió archivo' });
+
+  const thesisId = tokenRow.thesis_id;
+  const signerName = tokenRow.signer_name;
+  const signerRole = tokenRow.signer_role;
+
+  // Guardar PDF
+  const fileName = `${Date.now()}-${signerName.replace(/\s+/g,'-')}.pdf`;
+  const filePath = path.join(__dirname, 'uploads', fileName);
+  fs.writeFileSync(filePath, req.file.buffer);
+  const pdf_url = `/uploads/${fileName}`;
+
+  // Determinar tabla según rol
+  const now = Math.floor(Date.now() / 1000);
+  if (signerRole === 'evaluador' || signerRole === 'evaluator') {
+    const sigId = crypto.randomUUID();
+    db.prepare(`INSERT INTO digital_signatures (id, thesis_id, signer_name, signed_at, pdf_url)
+      VALUES (?, ?, ?, ?, ?)`).run(sigId, thesisId, signerName, now, pdf_url);
+  } else if (signerRole === 'director' || signerRole === 'program_director') {
+    const sigId = crypto.randomUUID();
+    db.prepare(`INSERT INTO digital_signatures (id, thesis_id, signer_name, signed_at, pdf_url)
+      VALUES (?, ?, ?, ?, ?)`).run(sigId, thesisId, signerName, now, pdf_url);
+  }
+
+  // Marcar token como usado
+  const usedAt = Math.floor(Date.now() / 1000);
+  db.prepare('UPDATE signing_tokens SET used_at = ? WHERE token = ?').run(usedAt, token);
+
+  res.json({ success: true, pdf_url });
+});
+
+// POST /theses/:id/meritoria/generate-signing-token — genera token para firma meritoria sin login
+app.post('/theses/:id/meritoria/generate-signing-token', authMiddleware, (req, res) => {
+  const thesisId = req.params.id;
+  const { signerName, signerRole } = req.body;
+  
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isAdmin = roles.includes('admin') || roles.includes('superadmin');
+  if (!isAdmin) return res.status(403).json({ error: 'forbidden' });
+
+  const ctx = getActaContext(thesisId);
+  if (!ctx) return res.status(404).json({ error: 'not found' });
+
+  // Generar token único
+  const token = crypto.randomBytes(24).toString('hex');
+  const tokenId = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+
+  // Guardar token (marcado con prefijo meritoria_ en signer_role)
+  db.prepare(`INSERT INTO signing_tokens (id, thesis_id, token, signer_name, signer_role, created_at, used_at)
+    VALUES (?, ?, ?, ?, ?, ?, NULL)`).run(tokenId, thesisId, token, signerName, 'meritoria_' + signerRole, now);
+
+  // Generar URL apuntando al frontend (puerto 5173)
+  const signUrl = `http://localhost:5173/sign/meritoria/token/${token}`;
+  res.json({ token, signUrl });
+});
+
+// GET /sign/meritoria/token/:token — devuelve data para formulario de firma meritoria (sin autenticación)
+app.get('/sign/meritoria/token/:token', (req, res) => {
+  const token = req.params.token;
+  
+  const tokenRow = db.prepare('SELECT * FROM signing_tokens WHERE token = ? AND used_at IS NULL').get(token);
+  if (!tokenRow) return res.status(404).json({ error: 'Token inválido o ya utilizado' });
+
+  // Verificar que es un token de meritoria
+  if (!tokenRow.signer_role.startsWith('meritoria_')) return res.status(404).json({ error: 'Token no es válido para meritoria' });
+
+  const ctx = getActaContext(tokenRow.thesis_id);
+  if (!ctx) return res.status(404).json({ error: 'Tesis no encontrada' });
+
+  const actualRole = tokenRow.signer_role.replace('meritoria_', '');
+
+  res.json({
+    token,
+    thesisId: tokenRow.thesis_id,
+    signerName: tokenRow.signer_name,
+    signerRole: actualRole,
+    thesis: { title: ctx.thesis.title },
+    students: ctx.students,
+    directors: ctx.directors,
+  });
+});
+
+// POST /sign/meritoria/token/:token/upload-signed — sube PDF firmado meritoria sin autenticación
+app.post('/sign/meritoria/token/:token/upload-signed', upload.single('signed_pdf'), (req, res) => {
+  const token = req.params.token;
+  
+  const tokenRow = db.prepare('SELECT * FROM signing_tokens WHERE token = ? AND used_at IS NULL').get(token);
+  if (!tokenRow) return res.status(404).json({ error: 'Token inválido o ya utilizado' });
+
+  if (!tokenRow.signer_role.startsWith('meritoria_')) return res.status(404).json({ error: 'Token no es válido para meritoria' });
+  if (!req.file) return res.status(400).json({ error: 'No se subió archivo' });
+
+  const thesisId = tokenRow.thesis_id;
+  const signerName = tokenRow.signer_name;
+
+  // Guardar PDF
+  const fileName = `${Date.now()}-meritoria-${signerName.replace(/\s+/g,'-')}.pdf`;
+  const filePath = path.join(__dirname, 'uploads', fileName);
+  fs.writeFileSync(filePath, req.file.buffer);
+  const pdf_url = `/uploads/${fileName}`;
+
+  // Guardar en meritoria_signatures
+  const now = Math.floor(Date.now() / 1000);
+  const sigId = crypto.randomUUID();
+  db.prepare(`INSERT INTO meritoria_signatures (id, thesis_id, signer_name, signed_at, pdf_url)
+    VALUES (?, ?, ?, ?, ?)`).run(sigId, thesisId, signerName, now, pdf_url);
+
+  // Marcar token como usado
+  const usedAt = Math.floor(Date.now() / 1000);
+  db.prepare('UPDATE signing_tokens SET used_at = ? WHERE token = ?').run(usedAt, token);
+
+  res.json({ success: true, pdf_url });
+});
+
+// GET /admin/program-rubrics/:programId — obtener rúbricas de un programa
+app.get('/admin/program-rubrics/:programId', authMiddleware, (req, res) => {
+  const programId = req.params.programId;
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isSuperAdmin = roles.includes('superadmin');
+  
+  // Si no es superadmin, verificar que el admin esté asociado al programa
+  if (!isSuperAdmin) {
+    const adminProg = db.prepare('SELECT program_id FROM program_admins WHERE user_id = ? AND program_id = ?').get(req.user.id, programId);
+    if (!adminProg) return res.status(403).json({ error: 'No tiene acceso a este programa' });
+  }
+
+  const rubrics = db.prepare('SELECT * FROM program_rubrics WHERE program_id = ?').all(programId);
+  const result = rubrics.map(r => ({
+    ...r,
+    sections_json: JSON.parse(r.sections_json)
+  }));
+  res.json(result);
+});
+
+// PUT /admin/program-rubrics/:programId/:evaluationType — actualizar rúbrica
+app.put('/admin/program-rubrics/:programId/:evaluationType', authMiddleware, (req, res) => {
+  const { programId, evaluationType } = req.params;
+  const { sections } = req.body;
+
+  if (!sections || !Array.isArray(sections)) {
+    return res.status(400).json({ error: 'sections es requerido y debe ser un array' });
+  }
+
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  const isSuperAdmin = roles.includes('superadmin');
+  
+  // Si no es superadmin, verificar que el admin esté asociado al programa
+  if (!isSuperAdmin) {
+    const adminProg = db.prepare('SELECT program_id FROM program_admins WHERE user_id = ? AND program_id = ?').get(req.user.id, programId);
+    if (!adminProg) return res.status(403).json({ error: 'No tiene acceso a este programa' });
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const rubricId = crypto.randomUUID();
+  const sectionsJson = JSON.stringify(sections);
+
+  try {
+    const existing = db.prepare('SELECT id FROM program_rubrics WHERE program_id = ? AND evaluation_type = ?').get(programId, evaluationType);
+    
+    if (existing) {
+      // Actualizar
+      db.prepare('UPDATE program_rubrics SET sections_json = ?, updated_at = ? WHERE id = ?')
+        .run(sectionsJson, now, existing.id);
+      res.json({ id: existing.id, programId, evaluationType, sections });
+    } else {
+      // Crear nueva
+      db.prepare('INSERT INTO program_rubrics (id, program_id, evaluation_type, sections_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(rubricId, programId, evaluationType, sectionsJson, now, now);
+      res.json({ id: rubricId, programId, evaluationType, sections });
+    }
+  } catch (e) {
+    console.error('Error saving rubric:', e);
+    res.status(500).json({ error: 'Error al guardar rúbrica' });
+  }
+});
+
+// GET /super/rubrics — obtener todas las rúbricas (solo superadmin)
+app.get('/super/rubrics', authMiddleware, (req, res) => {
+  const roles = db.prepare('SELECT role FROM user_roles WHERE user_id = ?').all(req.user.id).map(r => r.role);
+  if (!roles.includes('superadmin')) return res.status(403).json({ error: 'forbidden' });
+
+  const rubrics = db.prepare(`SELECT pr.*, p.name as program_name FROM program_rubrics pr 
+    LEFT JOIN programs p ON pr.program_id = p.id ORDER BY p.name, pr.evaluation_type`).all();
+  
+  const result = rubrics.map(r => ({
+    ...r,
+    sections_json: JSON.parse(r.sections_json)
+  }));
+  res.json(result);
 });
 
 app.listen(PORT, () => {

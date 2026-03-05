@@ -34,6 +34,7 @@ const navItems = {
     { label: "Tesis", href: "/admin/theses", icon: FileText },
     { label: "Evaluadores", href: "/admin/evaluators", icon: Users },
     { label: "Programas", href: "/admin/programs", icon: BookOpen },
+    { label: "Rúbricas", href: "/admin/rubrics", icon: BookOpen },
   ],
 };
 

@@ -36,6 +36,9 @@ export default function AdminThesisDetail() {
   const [meritoriaSignerName, setMeritoriaSignerName] = useState<string>("");
   const [loadingMeritoria, setLoadingMeritoria] = useState(false);
 
+  // Estado para enlaces de firma compartibles
+  const [generatedSigningLinks, setGeneratedSigningLinks] = useState<Record<string, {url: string; copied: boolean}>>({});
+
   // compute consolidated averages and breakdown for display
   const consolidated = (() => {
     if (!thesis || !thesis.evaluations || thesis.evaluations.length === 0) {
@@ -128,6 +131,72 @@ export default function AdminThesisDetail() {
     }
   };
 
+  // Generar enlace de firma compartible
+  const handleGenerateSigningLink = async (signerName: string, signerRole: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/theses/${id}/generate-signing-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ signerName, signerRole }),
+      });
+      if (!resp.ok) throw new Error('Error generando enlace');
+      const { signUrl } = await resp.json();
+      setGeneratedSigningLinks(prev => ({
+        ...prev,
+        [signerName]: { url: signUrl, copied: false }
+      }));
+      toast.success(`Enlace generado para ${signerName}`);
+    } catch (e: any) {
+      toast.error(e.message || 'Error generando enlace');
+    }
+  };
+
+  // Copiar enlace al portapapeles
+  const handleCopyLink = (signerName: string) => {
+    const link = generatedSigningLinks[signerName]?.url;
+    if (link) {
+      navigator.clipboard.writeText(link).then(() => {
+        setGeneratedSigningLinks(prev => ({
+          ...prev,
+          [signerName]: { ...prev[signerName], copied: true }
+        }));
+        setTimeout(() => {
+          setGeneratedSigningLinks(prev => ({
+            ...prev,
+            [signerName]: { ...prev[signerName], copied: false }
+          }));
+        }, 2000);
+      });
+    }
+  };
+
+  // Generar enlace de firma compartible para meritoria
+  const handleGenerateMeritoriaLink = async (signerName: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const resp = await fetch(`${API_BASE}/theses/${id}/meritoria/generate-signing-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ signerName, signerRole: 'director' }),
+      });
+      if (!resp.ok) throw new Error('Error generando enlace');
+      const { signUrl } = await resp.json();
+      setGeneratedSigningLinks(prev => ({
+        ...prev,
+        [signerName]: { url: signUrl, copied: false }
+      }));
+      toast.success(`Enlace generado para ${signerName}`);
+    } catch (e: any) {
+      toast.error(e.message || 'Error generando enlace');
+    }
+  };
 
   useEffect(() => {
     fetchThesis();
@@ -617,9 +686,43 @@ export default function AdminThesisDetail() {
                 <p className="text-xs text-muted-foreground">No hay firmas digitales registradas aún.</p>
               )}
               {actaStatus?.digitalPendingSigners?.length > 0 && (
-                <p className="text-xs text-orange-600 mt-1">
-                  Pendientes: {actaStatus.digitalPendingSigners.map((p: any) => p.name).join(', ')}
-                </p>
+                <div>
+                  <p className="text-xs text-orange-600 mt-1 mb-3">
+                    Pendientes: {actaStatus.digitalPendingSigners.map((p: any) => p.name).join(', ')}
+                  </p>
+                  
+                  {/* Sección de enlaces compartibles */}
+                  <div className="bg-blue-50 border border-blue-200 rounded p-3 space-y-2">
+                    <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
+                    {actaStatus.digitalPendingSigners.map((pending: any) => (
+                      <div key={pending.name} className="flex items-center gap-2">
+                        <div className="flex-1 text-xs">
+                          <p className="font-medium">{pending.name}</p>
+                          <p className="text-muted-foreground">{pending.role === 'evaluator' ? 'Evaluador' : pending.role === 'director' ? 'Director' : 'Director del Programa'}</p>
+                        </div>
+                        {generatedSigningLinks[pending.name]?.url ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleCopyLink(pending.name)}
+                            className="whitespace-nowrap"
+                          >
+                            {generatedSigningLinks[pending.name].copied ? '✅ Copiado!' : '📋 Copiar enlace'}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleGenerateSigningLink(pending.name, pending.role)}
+                            className="whitespace-nowrap"
+                          >
+                            🔗 Generar enlace
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -823,6 +926,40 @@ export default function AdminThesisDetail() {
                 );
               })}
             </div>
+
+            {/* Sección de enlaces compartibles para meritoria */}
+            {!meritoriaStatus.allSigned && meritoriaStatus.pendingDirectors?.length > 0 && (
+              <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-3 space-y-2">
+                <p className="text-xs font-medium text-blue-900 mb-2">🔗 Generar enlaces de firma sin login:</p>
+                {meritoriaStatus.pendingDirectors.map((pending: string) => (
+                  <div key={pending} className="flex items-center gap-2">
+                    <div className="flex-1 text-xs">
+                      <p className="font-medium">{pending}</p>
+                      <p className="text-muted-foreground">Director</p>
+                    </div>
+                    {generatedSigningLinks[pending]?.url ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleCopyLink(pending)}
+                        className="whitespace-nowrap"
+                      >
+                        {generatedSigningLinks[pending].copied ? '✅ Copiado!' : '📋 Copiar enlace'}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleGenerateMeritoriaLink(pending)}
+                        className="whitespace-nowrap"
+                      >
+                        🔗 Generar enlace
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Banner firmada completa */}
             {meritoriaStatus.allSigned && (
